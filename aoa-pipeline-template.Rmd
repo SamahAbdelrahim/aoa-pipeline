@@ -20,6 +20,7 @@ library(tmcn)
 # load functions
 walk(list.files("scripts", pattern = "*.R$", full.names = TRUE), source)
 set.seed(42)
+
 ```
 
 This template provides the structure for how to fit age of acquisition (AoA) prediction models, using data and scripts in this repository.
@@ -41,30 +42,33 @@ eng_wb_data
 
 Defining languages:
 ```{r define_langs}
-target_langs <- c("French (French)", "French (Quebecois)", 
-                  "Italian",
-                  "Spanish (Mexican)", "Spanish (European)",
-                  "Catalan",
-                  "Portuguese (European)",  
-                  "Dutch",
-                  "English (American)", "English (Australian)", 
-                  "English (British)", 
-                  "German",
-                  "Danish", "Norwegian", "Swedish", 
-                  "Croatian", "Czech", "Russian",
-                  "Turkish", 
-                  "Hungarian", "Estonian",
-                  "Mandarin (Taiwanese)", "Mandarin (Beijing)",
-                  "Cantonese",
-                  "Hebrew", # "Arabic (Saudi)",
-                  "Korean",
-                  "Japanese")
+# target_langs <- c("French (French)", "French (Quebecois)", 
+#                   "Italian",
+#                   "Spanish (Mexican)", "Spanish (European)",
+#                   "Catalan",
+#                   "Portuguese (European)",  
+#                   "Dutch",
+#                   "English (American)", "English (Australian)", 
+#                   "English (British)", 
+#                   "German",
+#                   "Danish", "Norwegian", "Swedish", 
+#                   "Croatian", "Czech", "Russian",
+#                   "Turkish", 
+#                   "Hungarian", "Estonian",
+#                   "Mandarin (Taiwanese)", "Mandarin (Beijing)",
+#                   "Cantonese",
+#                   "Hebrew", # "Arabic (Saudi)",
+#                   "Korean",
+#                   "Japanese") 
+
+target_langs <- c("English (American)", "Mandarin (Beijing)", "Korean", "English (Australian)", "Cantonese", "Catalan" , "Japanese", "Turkish" , "Spanish (Mexican)", "Russian", "Kiswahili", "Mandarin (Taiwanese)", "Spanish (Peruvian)", "Spanish (European)", "Hebrew", "French (French)")
+
 ```
 
 
 Loading Wordbank data for multiple languages (cached or not):
 ```{r load_wordbank_xling}
-wb_data <- load_wb_data(target_langs, db_args = db_args)
+wb_data <- load_wb_data(target_langs)
 aoas <- fit_aoas(wb_data)
 ```
 
