@@ -1,8 +1,8 @@
 ---
-title: "AoA prediction template"
+title: "samah_version"
+author: "Samah"
+date: "2025-04-16"
 output: html_document
-editor_options: 
-  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -33,13 +33,6 @@ The general steps are:
 
 
 # Load Wordbank data
-
-Loading cached Wordbank data for English:
-```{r load_wordbank_eng, eval=FALSE}
-eng_wb_data <- load_wb_data("English (American)")
-eng_wb_data
-```
-
 Defining languages:
 ```{r define_langs}
 # target_langs <- c("French (French)", "French (Quebecois)", 
@@ -75,21 +68,6 @@ wb_data <- load_wb_data(target_langs)
 aoas <- fit_aoas(wb_data)
 ```
 
-Creating saved Wordbank data for a language, for example:
-```{r create_wordbank_eng, eval=FALSE}
-eng_wb_data <- create_wb_data("English (American)")
-```
-
-Creating saved Wordbank data one step at a time (potentially making changes between steps), for example:
-```{r create_wordbank_eng_steps, eval=FALSE}
-eng_wg <- create_inst_data("English (American)", "WG")
-eng_ws <- create_inst_data("English (American)", "WS")
-eng_wg_summary <- collapse_inst_data(eng_wg)
-eng_ws_summary <- collapse_inst_data(eng_ws)
-eng_comb_summary <- combine_form_data(list(eng_wg_summary, eng_ws_summary))
-```
-
-
 # Load predictors
 
 ## Ratings and phonemes
@@ -118,23 +96,6 @@ corpus_args <- list(corpus = NULL, role = NULL, role_exclude = "Target_Child",
                     age = NULL, sex = NULL, part_of_speech = NULL, token = "*")
 ```
 
-
-Loading saved morphology metrics for many languages:
-```{r create_morphs_xling, eval=FALSE}
-walk(target_langs, load_morph_data, corpus_args)
-```
-
-Loading saved parsed data for many languages:
-```{r parse_data, eval=FALSE}
-walk(target_langs, load_parsed_data, corpus_args = corpus_args)
-```
-
-
-Loading cached CHILDES metrics for English:
-```{r load_childes_eng, eval=FALSE}
-eng_metrics <- load_childes_metrics("English (American)", uni_lemmas)
-```
-
 Creating saved CHILDES metrics for English, potentially changing which metrics are computed and/or arguments that are passed to `childesr` functions:
 ```{r specify_childes}
 metric_funs <- list(base = list(compute_count, compute_cd, 
@@ -145,43 +106,11 @@ metric_funs <- list(base = list(compute_count, compute_cd,
                     morph = list(compute_n_morphemes))
 ```
 
-
-Creating saved CHILDES data for English:
-```{r create_childes_english, eval=FALSE}
-eng_childes <- get_token_metrics("English (American)", metric_funs, corpus_args)
-eng_unilemmas <- get_uni_lemma_metrics("English (American)", build_uni_lemma_map(uni_lemmas))
-childes_metrics = eng_unilemmas
-```
-
-
-Creating saved CHILDES data for many languages:
-```{r create_childes_xling, eval=FALSE}
-walk(target_langs, get_token_metrics, metric_funs, corpus_args)
-```
-
-Creating saved UNILEMMA data for many languages:
-```{r create_unilemma_xling, eval=FALSE}
-walk(target_langs, get_uni_lemma_metrics, build_uni_lemma_map(uni_lemmas))
-```
-
 Loading cached CHILDES data for multiple languages:
 ```{r load_unilemma_xling, eval=TRUE}
 childes_metrics <- load_childes_metrics(target_langs, uni_lemmas) |> 
   filter(!is.na(uni_lemma), uni_lemma != "NA")
 ```
-
-
-Get phonology via eSpeak for tokens that didn't get it from CHILDES:
-```{r eval=TRUE}
-phon_data <- uni_lemmas |> filter(uni_lemma != "NA") |> map_phonemes()
-phon_metrics <- phon_data |> compute_phon_metrics()
-childes_metrics <- childes_metrics |>
-  left_join(phon_metrics, by = c("language", "uni_lemma")) |>
-  mutate(length_char = coalesce(length_char, num_chars),
-         length_phon = coalesce(length_phon, num_phons)) |>
-  select(-c(num_chars, num_phons))
-```
-
 
 # Prepare data for modeling
 
@@ -199,17 +128,6 @@ childes_metrics <- childes_metrics |>
 ```{r residualize}
 semantic_preds <- c("concretenes") #, "babiness")
 distrib_preds <- c("freq") # , "cd")
-# phon_preds <- c("length_phon", "phon_neighbors")
-# morph_preds <- c("form_entropy", "n_features", "n_morphemes")
-# syntax_preds <- c("mlu", "subcat_entropy")
-
-# for (preds in list(distrib_preds, phon_preds, morph_preds, syntax_preds)) {
-#   childes_metrics <- childes_metrics |> 
-#     mutate(data = map(data, \(d) {
-#       d |> mutate(across(all_of(preds[-1]), 
-#                          partial(residualize_col, 
-#                                  residualizing_column = d |> pull(preds[1]))))}))
-# }
 
 for (preds in list(distrib_preds)) {
   childes_metrics <- childes_metrics |> 
@@ -228,7 +146,6 @@ childes_metrics <- childes_metrics |> unnest(data)
 Combine mapped predictors and CHILDES predictors:
 
 ```{r merge_all}
-#predictor_data_list <- list(babiness, concreteness, childes_metrics)
 predictor_data_list <- list(concreteness, childes_metrics)
 
 predictor_data <- predictor_data_list |>
@@ -238,13 +155,6 @@ predictor_data <- predictor_data_list |>
 ## Setting predictors
 
 ```{r set_predictors}
-# predictor_sources <- list(
-#   c("freq"), # "cd"
-#   c("concreteness", "babiness"),
-#   c("length_phon", "phon_neighbors"),
-#   c("n_features", "form_entropy", "subcat_entropy"), 
-#   c("n_morphemes"),
-#   c("mlu"))
 
 predictor_sources <- list(
   c("freq"), # "cd"
@@ -286,6 +196,9 @@ aoa_predictor_data <- predictor_data_imputed_scaled |>
            `contrasts<-`(value = "contr.sum"))
 ```
 
+``` {r}
+aoa_predictor_data <- aoa_predictor_data %>% filter(lexical_category == "nouns")
+```
 # Modelling
 
 ## Run model 
