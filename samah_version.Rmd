@@ -61,6 +61,50 @@ target_langs <- c("English (American)", "Mandarin (Beijing)", "Korean", "English
 
 ```
 
+load data on solidity, count/mass, and shape categorization
+``` {r load norm ratings}
+norms <- read_csv(glue("{pred_dir}/samah_ratings.csv"))
+norms <- norms %>% select(uni_lemma, block, response, proportion, language) %>% 
+  distinct()
+
+norms_clean <- norms %>%
+  mutate(response = case_when(
+           block == "solidity" & response == "unclear/unknown" ~ "unclear_solid",
+           block == "count_mass" & response == "unclear/unknown" ~ "unclear_countmass",
+           TRUE ~ response
+         )) %>%
+  select(-block) %>% 
+  pivot_wider(names_from = response, values_from = proportion,
+              values_fill = 0) %>%
+  select(-c("NA"))
+
+library(purrr)
+
+# norms_clean <- norms_clean %>%
+#   mutate(across(
+#     where(is.list),
+#     ~ map_dbl(.x, function(val) {
+#         if (is.null(val) || length(val) == 0) {
+#           return(NA_real_)
+#         } else {
+#           return(as.numeric(val[1]))  # take first value only
+#         }
+#       })
+#   )) %>%
+#   mutate(across(where(is.numeric), ~ replace_na(.x, 0)))
+
+
+# norms <- norms %>% 
+#   mutate(n_response = 
+#            case_when( block == "solidity" & response == "unclear/unknown" ~                   "unclear_solid", 
+#             TRUE ~ response
+#            ) ) %>% 
+#   pivot_wider(names_from = n_response, values_from = proportion)  %>%               select(-c(block, response))
+
+#norms  <- mutate(norms, x = ifelse(is.na(x), 0, x))
+# %>%replace(is.na(.), 0)
+#  mutate(.= replace_na(., 0))
+```
 
 Loading Wordbank data for multiple languages (cached or not):
 ```{r load_wordbank_xling}
@@ -199,7 +243,307 @@ aoa_predictor_data <- predictor_data_imputed_scaled |>
 ``` {r}
 aoa_predictor_data <- aoa_predictor_data %>% filter(lexical_category == "nouns")
 ```
-# Modelling
+
+merge my data with above data
+``` {r}
+# final_data <- aoa_predictor_data %>%
+#   left_join(norms_clean, by = c("language", "uni_lemma"))
+
+aoa_predictor_data <- aoa_predictor_data %>% select(-c("language"))
+norms_clean <- norms_clean %>% select(-c("language"))
+final_data <- aoa_predictor_data %>%
+  left_join(norms_clean, by = c("uni_lemma")) %>%
+  distinct()
+
+```
+
+#samah model
+
+## few predictors model
+```{r}
+final_data <- final_data %>%
+  mutate(across(c(freq, concreteness, solid, shape, `count noun`, `mass noun`, `none of these`, `non-solid`, color, `material`), scale))
+
+predictors_df_few <- final_data %>%
+  select(aoa, freq, concreteness, `solid`, shape, `count noun`)  %>%
+  drop_na()
+
+
+```
+
+```{r}
+# Residualize solid ~ freq + concreteness
+solid_resid <- lm(solid ~ freq + concreteness, data = predictors_df_few) %>% resid()
+
+# Residualize shape ~ freq + concreteness + solid
+shape_resid <- lm(shape ~ freq + concreteness + solid, data = predictors_df_few) %>% resid()
+
+# Residualize count noun ~ freq + concreteness + solid + shape
+count_resid <- lm(`count noun` ~ freq + concreteness + solid + shape, data = predictors_df_few) %>% resid()
+
+```
+
+```{r}
+predictors_df_few <- predictors_df_few %>%
+  mutate(
+    solid_resid = solid_resid,
+    shape_resid = shape_resid,
+    count_resid = count_resid
+  )
+
+```
+
+```{r}
+aoa_model_few <- lm(aoa ~ freq + concreteness + solid_resid + shape_resid + count_resid, data = predictors_df_few)
+summary(aoa_model_few)
+
+```
+
+## more predictors model
+```{r}
+predictors_df_more <- final_data %>%
+  select(aoa, freq, concreteness, `solid`, shape, `count noun`, `material`, `non-solid`, `mass noun`, `color`, `none of these`)  %>%
+  drop_na()
+
+# #Scale numeric predictors
+# predictors_df_more <- predictors_df_more %>%
+#   mutate(across(c(
+#     freq, concreteness,
+#     solid, shape, `count noun`,
+#     `material`, `non-solid`, `mass noun`, color, `none of these`
+#   ), scale))
+
+# Residualize each dimension
+solid_resid      <- lm(solid ~ freq + concreteness, data = predictors_df_more) %>% resid()
+shape_resid      <- lm(shape ~ freq + concreteness + solid, data = predictors_df_more) %>% resid()
+count_resid      <- lm(`count noun` ~ freq + concreteness + solid + shape, data = predictors_df_more) %>% resid()
+
+material_resid   <- lm(`material` ~ freq + concreteness + solid + shape + `count noun`, data = predictors_df_more) %>% resid()
+
+nonsolid_resid   <- lm(`non-solid` ~ freq + concreteness + solid + shape + `count noun` + `material`, data = predictors_df_more) %>% resid()
+
+massnoun_resid   <- lm(`mass noun` ~ freq + concreteness + solid + shape + `count noun` + `material` + `non-solid`, data = predictors_df_more) %>% resid()
+
+color_resid  <- lm(color ~ freq + concreteness + solid + shape + `count noun` + `material` + `non-solid`, data = predictors_df_more) %>% resid()
+
+none_resid <- lm(`none of these` ~ freq + concreteness + solid + shape + `count noun` + `material` + `non-solid` + color, data = predictors_df_more) %>% resid()
+
+
+predictors_df_more <- predictors_df_more %>%
+  mutate(
+    solid_resid     = solid_resid,
+    shape_resid     = shape_resid,
+    count_resid     = count_resid,
+    material_resid  = material_resid,
+    nonsolid_resid  = nonsolid_resid,
+    massnoun_resid  = massnoun_resid,
+    color_resid     = color_resid, 
+    none_resid = none_resid
+  )
+
+#Fit final model with all residuals + freq and concreteness
+aoa_model_more <- lm(
+  aoa ~ log(freq) + concreteness +
+    solid_resid + shape_resid + count_resid +
+    material_resid + nonsolid_resid + massnoun_resid + color_resid + none_resid,
+  data = predictors_df_more
+)
+
+summary(aoa_model_more)
+```
+
+## raw variables model without residuals
+```{r}
+aoa_model_raw <- lm(
+  aoa ~ log(freq) + concreteness +
+`solid`+ shape+ `count noun`+ `mass noun`+ `material` +`color` + `none of these` + `non-solid`,
+  data = final_data
+)
+summary(aoa_model_raw)
+```
+
+```{r}
+# inspect multicollinearity
+library(car)
+vif(aoa_model_more)
+vif(aoa_model_raw)
+```
+PCA
+``` {r}
+cat_pca <- prcomp(predictors_df_more[, c("shape", "material", "color", "none of these")], scale. = TRUE)
+summary(cat_pca)
+
+cat_pca$rotation
+
+
+predictors_df_more$pca1 <- cat_pca$x[, 1]
+predictors_df_more$pca2 <- cat_pca$x[, 2]
+
+#pc1 is like (-material vs +shape/none) and pc2 is (+none vs structured)
+#pc1 is everything high in material, 
+summary(lm(aoa ~ log(freq) + concreteness + pca1 + pca2 + solid + `count noun` + `mass noun` + `non-solid`, data = predictors_df_more))
+
+```
+
+```{r}
+#✅ Use hierarchical (nested) regression with Anova
+
+base <- lm(aoa ~ freq + concreteness, data = predictors_df)
+shape_only <- lm(aoa ~ freq + concreteness + shape, data = predictors_df)
+shape_count <- lm(aoa ~ freq + concreteness + shape + `count noun`, data = predictors_df)
+anova(base, shape_only, shape_count)
+```
+
+```{r}
+# ✅ Use lmg or dominance analysis to partition shared variance
+library(relaimpo)
+calc.relimp(aoa_model, type = "lmg", rela = TRUE)
+```
+
+Bayesian modeling:
+```{r}
+library(brms)
+
+# Standardize predictors
+predictors_df <- predictors_df %>%
+  mutate(across(c(freq, concreteness, solid, shape, `count noun`, material, `non-solid`, `mass noun`, color), scale)) %>% 
+  mutate(count_noun = `count noun`, non_solid = `non-solid`, mass_noun = `mass noun`)
+
+# Bayesian model
+aoa_bayes <- brm(
+  aoa ~ freq + concreteness + solid + shape + count_noun + material + non_solid + mass_noun + color,
+  data = predictors_df,
+  family = gaussian(),
+  prior = set_prior("normal(0, 1)", class = "b"),
+  chains = 4, cores = 4, iter = 2000
+)
+summary(aoa_bayes)
+
+
+```
+
+##data types
+convert from factors to numeric
+```{r}
+# Check the class of variables
+sapply(predictors_df[, c("freq", "concreteness")], class)
+
+# If they are factors, convert them to numeric:
+predictors_df$freq <- as.numeric(as.character(predictors_df$freq))
+predictors_df$concreteness <- as.numeric(as.character(predictors_df$concreteness))
+```
+rerun the model
+```{r}
+aoa_model <- lm(aoa ~ freq + concreteness + solid_resid + shape_resid + count_resid, data = predictors_df)
+summary(aoa_model)
+```
+
+
+
+
+#visualization
+visualize
+```{r}
+#library(ggeffects)
+
+# Get marginal effects for all terms
+effects_df <- ggpredict(aoa_model, terms = c("solid_resid", "shape_resid", "count_resid", "freq", "concreteness"))
+
+# Plot the effects
+plot(effects_df)
+```
+
+``` {r}
+plot(ggpredict(aoa_model, terms = "solid_resid")) + ggtitle("Effect of Solid (residualized)")
+plot(ggpredict(aoa_model, terms = "shape_resid")) + ggtitle("Effect of Shape (residualized)")
+plot(ggpredict(aoa_model, terms = "count_resid")) + ggtitle("Effect of Countability (residualized)")
+plot(ggpredict(aoa_model, terms = "freq")) + ggtitle("Effect of Frequency")
+plot(ggpredict(aoa_model, terms = "concreteness")) + ggtitle("Effect of Concreteness")
+
+```
+
+```{r}
+# Solid
+ggplot(predictors_df, aes(x = solid_resid, y = aoa)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", color = "darkred") +
+  labs(title = "AoA vs Solid (residualized)", x = "Solid (resid)", y = "Age of Acquisition")
+
+# Shape
+ggplot(predictors_df, aes(x = shape_resid, y = aoa)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", color = "blue") +
+  labs(title = "AoA vs Shape (residualized)", x = "Shape (resid)", y = "Age of Acquisition")
+
+# Count
+ggplot(predictors_df, aes(x = count_resid, y = aoa)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", color = "purple") +
+  labs(title = "AoA vs Countability (residualized)", x = "Count noun (resid)", y = "Age of Acquisition")
+
+```
+
+## raw vs predicted
+``` {r}
+# Get predicted values
+predict_df <- predictors_df %>%
+  mutate(predicted_aoa = predict(aoa_model))
+
+ggplot(predict_df, aes(x = aoa, y = predicted_aoa)) +
+  geom_point(alpha = 0.5) + 
+  geom_smooth(method = "lm", color = "red") +  # Adding a regression line to see the trend
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "blue") +  # 45-degree line
+  labs(x = "Observed AoA", y = "Predicted AoA", 
+       title = "Predicted vs Observed AoA from the Model") +
+  theme_minimal()
+
+
+# Create residuals
+predict_df$residuals <- predict_df$aoa - predict(aoa_model)
+
+# Plot residuals
+ggplot(predict_df, aes(x = predicted_aoa, y = residuals)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "Predicted AoA", y = "Residuals",
+       title = "Residuals Plot: Observed vs Predicted AoA") +
+  theme_minimal()
+
+```
+
+```{r}
+predictors_df <- predictors_df %>% 
+  mutate(across(c(freq, concreteness, solid, shape, `count noun`), c))
+
+ggpairs(predictors_df %>% dplyr::select(c(aoa, freq, concreteness, solid, shape, `count noun`)))
+
+```
+
+# interactions
+``` {r}
+
+# Ensure that solid_resid and count_resid are numeric and in the correct format
+predictors_df <- predictors_df %>%
+  mutate(
+    solid_resid = as.numeric(solid_resid),
+    count_resid = as.numeric(count_resid)
+  )
+
+# Recreate the interaction plot
+interaction_plot <- ggpredict(aoa_model, terms = c("solid_resid", "count_resid"))
+
+# Plot the interaction
+ggplot(interaction_plot, aes(x = solid_resid, y = predicted, color = as.factor(count_resid))) +
+  geom_line() +
+  labs(x = "Solid Residual", y = "Predicted AoA", color = "Count Residual",
+       title = "Interaction between Solid Residual and Count Residual on Predicted AoA") +
+  theme_minimal()
+
+
+```
+
+
+# Old Modelling
 
 ## Run model 
 
