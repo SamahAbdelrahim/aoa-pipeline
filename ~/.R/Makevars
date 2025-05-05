@@ -1,0 +1,2 @@
+CXX17FLAGS = -O3 -march=native -mtune=native -std=c++17
+CXX17 = clang++ -arch arm64 -mmacosx-version-min=11.0

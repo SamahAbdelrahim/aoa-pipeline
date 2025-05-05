@@ -242,6 +242,8 @@ aoa_predictor_data <- predictor_data_imputed_scaled |>
 
 ``` {r}
 aoa_predictor_data <- aoa_predictor_data %>% filter(lexical_category == "nouns")
+write_csv(aoa_predictor_data, "aoa_predictor_data.csv")
+
 ```
 
 merge my data with above data
@@ -250,12 +252,29 @@ merge my data with above data
 #   left_join(norms_clean, by = c("language", "uni_lemma"))
 
 aoa_predictor_data <- aoa_predictor_data %>% select(-c("language"))
-norms_clean <- norms_clean %>% select(-c("language"))
+
+norms_clean <-   %>% select(-c("language"))
 final_data <- aoa_predictor_data %>%
   left_join(norms_clean, by = c("uni_lemma")) %>%
   distinct()
 
+final_data %>% write_csv("final_data.csv")
+
+# find column names that are stored as lists
+final_data <- as.data.frame(final_data ) 
+
+final_data <- final_data %>%
+  mutate(across(where(is.list), ~ map_dbl(.x, function(val) {
+    if (is.null(val) || length(val) == 0) {
+      return(NA_real_)
+    } else {
+      return(as.numeric(val[1]))  # take first value only
+    }
+  }))) %>%
+  mutate(across(where(is.numeric), ~ replace_na(.x, 0)))
+
 ```
+
 
 #samah model
 
@@ -267,7 +286,6 @@ final_data <- final_data %>%
 predictors_df_few <- final_data %>%
   select(aoa, freq, concreteness, `solid`, shape, `count noun`)  %>%
   drop_na()
-
 
 ```
 
@@ -302,7 +320,7 @@ summary(aoa_model_few)
 ## more predictors model
 ```{r}
 predictors_df_more <- final_data %>%
-  select(aoa, freq, concreteness, `solid`, shape, `count noun`, `material`, `non-solid`, `mass noun`, `color`, `none of these`)  %>%
+  select(aoa, freq, concreteness, `solid`, shape, `count noun`, `material`, `non-solid`, `mass noun`, `color`, `none of these`, unclear_countmass, unclear_solid)  %>%
   drop_na()
 
 # #Scale numeric predictors
@@ -368,22 +386,6 @@ library(car)
 vif(aoa_model_more)
 vif(aoa_model_raw)
 ```
-PCA
-``` {r}
-cat_pca <- prcomp(predictors_df_more[, c("shape", "material", "color", "none of these")], scale. = TRUE)
-summary(cat_pca)
-
-cat_pca$rotation
-
-
-predictors_df_more$pca1 <- cat_pca$x[, 1]
-predictors_df_more$pca2 <- cat_pca$x[, 2]
-
-#pc1 is like (-material vs +shape/none) and pc2 is (+none vs structured)
-#pc1 is everything high in material, 
-summary(lm(aoa ~ log(freq) + concreteness + pca1 + pca2 + solid + `count noun` + `mass noun` + `non-solid`, data = predictors_df_more))
-
-```
 
 ```{r}
 #✅ Use hierarchical (nested) regression with Anova
@@ -400,7 +402,59 @@ library(relaimpo)
 calc.relimp(aoa_model, type = "lmg", rela = TRUE)
 ```
 
-Bayesian modeling:
+
+#PCA
+for categorical dimensions
+``` {r}
+cat_pca <- prcomp(predictors_df_more[, c("shape", "material", "color", "none of these")], scale. = TRUE)
+summary(cat_pca)
+
+cat_pca$rotation
+
+
+predictors_df_more$pca1 <- cat_pca$x[, 1]
+predictors_df_more$pca2 <- cat_pca$x[, 2]
+
+#pc1 is like (-material vs +shape/none) and pc2 is (+none vs structured)
+#pc1 is everything high in material, 
+summary(lm(aoa ~ log(freq) + concreteness + pca1 + pca2 + solid + `count noun` + `mass noun` + `non-solid`, data = predictors_df_more))
+
+```
+
+for solidity
+``` {r}
+solid_pca <- prcomp(predictors_df_more[, c("solid", "non-solid", "unclear_solid")], scale. = TRUE)
+summary(solid_pca)
+
+solid_pca$rotation
+
+
+predictors_df_more$pca1_solid <- solid_pca$x[, 1]
+predictors_df_more$pca2_solid <- solid_pca$x[, 2]
+
+#pc1 is like (-material vs +shape/none) and pc2 is (+none vs structured)
+#pc1 is everything high in material, 
+summary(lm(aoa ~ log(freq) + concreteness + pca1 + pca2 + `count noun` + `mass noun` + pca1_solid + pca2_solid, data = predictors_df_more))
+
+```
+for count/mass
+``` {r}
+count_pca <- prcomp(predictors_df_more[, c("count noun", "mass noun", "unclear_countmass")], scale. = TRUE)
+summary(count_pca)
+
+count_pca$rotation
+
+
+predictors_df_more$pca1_count <- count_pca$x[, 1]
+predictors_df_more$pca2_count <- count_pca$x[, 2]
+
+#pc1 is like (-material vs +shape/none) and pc2 is (+none vs structured)
+#pc1 is everything high in material, 
+summary(lm(aoa ~ log(freq) + concreteness + pca1 + pca2 + pca1_count + pca2_count+ pca1_solid + pca2_solid, data = predictors_df_more))
+
+```
+
+#Bayesian modeling:
 ```{r}
 library(brms)
 
@@ -437,6 +491,7 @@ rerun the model
 aoa_model <- lm(aoa ~ freq + concreteness + solid_resid + shape_resid + count_resid, data = predictors_df)
 summary(aoa_model)
 ```
+
 
 
 

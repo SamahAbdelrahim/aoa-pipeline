@@ -1,0 +1,559 @@
+---
+title: "samah_version"
+author: "Samah"
+date: "2025-04-16"
+output: html_document
+---
+
+#packages
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(dplyr.summarise.inform = FALSE)
+# load libraries
+library(tidyverse)
+library(modelr)
+library(glue)
+library(wordbankr)
+library(childesr)
+library(here)
+library(quanteda)
+library(tmcn)
+library(janitor)
+# load functions
+walk(list.files("scripts", pattern = "*.R$", full.names = TRUE), source)
+set.seed(42)
+
+```
+
+
+#load data
+```{r load_data}
+norms <- read_csv(glue("{pred_dir}/samah_ratings.csv"))
+predictors <- read_csv("aoa_predictor_data.csv")
+
+predictors <-predictors %>% filter(language == "English (American)")
+
+norms_wide <-norms %>% filter(language == "English (American)") %>%
+  select(uni_lemma, block, response, proportion) %>% 
+  distinct() %>%
+    mutate(response = case_when(
+           block == "solidity" & response == "unclear/unknown" ~ "unclear_solid",
+           block == "count_mass" & response == "unclear/unknown" ~ "unclear_countmass",
+           TRUE ~ response
+         )) %>%
+  select(-block) %>%
+  pivot_wider(names_from = response, values_from = c(proportion), values_fill = 0)
+
+```
+check for duplicates
+```{r check_duplicates}
+norms_wide %>%
+  group_by(uni_lemma) %>%
+  filter(n() > 1) %>%
+  ungroup()
+```
+
+merge with my data
+```{r merge_data}
+#norms_wide <-  
+
+final_data <- predictors  %>% select(-c("language")) %>%
+    filter(measure != "understands" ) %>%
+  left_join(norms_wide, by = c("uni_lemma")) %>%
+  distinct()
+#clean column names
+final_data <- final_data %>% janitor:: clean_names()
+
+final_data <- final_data %>%
+  mutate(across(c(freq, concreteness, solid, shape, count_noun, mass_noun, none_of_these, non_solid, color, material, unclear_solid, unclear_countmass), scale))
+```
+
+check correlations
+```{r check_correlations}
+correlations <- predictors_df_few %>%
+  select(freq, concreteness, solid_resid, shape_resid, count_resid) %>%
+  cor(use = "pairwise.complete.obs") %>%
+  as.data.frame() %>%
+  rownames_to_column("predictor") %>%
+  pivot_longer(-predictor, names_to = "predictor2", values_to = "correlation") %>%
+  filter(predictor != predictor2) %>%
+  arrange(desc(abs(correlation)))
+
+correlations %>%
+  ggplot(aes(x = reorder(predictor, correlation), y = correlation)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Correlations between predictors",
+       x = "Predictor",
+       y = "Correlation") +
+  theme_minimal()
+```
+
+
+# predictors
+choosing few predictors 
+```{r choose_predictors}
+predictors_df_few <- final_data %>%
+  select(aoa, freq, concreteness, solid, shape, count_noun)  %>%
+  drop_na() %>%
+  filter(!is.na(freq) & freq > 0) %>%
+  drop_na(concreteness, solid, shape, count_noun)
+
+predictors_df_few %>%
+  summarise(
+    across(c(freq, concreteness, solid, shape, count_noun), ~ sum(is.na(.)))
+  )
+
+```
+
+choosing many predictors
+```{r choose_predictors_many}
+predictors_df_many <- final_data %>%
+  select(aoa, freq, concreteness, solid, shape, count_noun, mass_noun, none_of_these, non_solid, color, material, unclear_solid, unclear_countmass) %>%
+  drop_na() %>%
+  filter(!is.na(freq) & freq > 0)
+```
+
+
+
+# residualize predictors
+few predictors
+```{r check_predictors}
+# Residualize solid ~ freq + concreteness
+solid_resid <- lm(solid ~ log(freq) + concreteness, data = predictors_df_few) %>% resid()
+
+# Residualize shape ~ freq + concreteness + solid
+shape_resid <- lm(shape ~ log(freq) + concreteness + solid, data = predictors_df_few) %>% resid()
+
+# Residualize count noun ~ freq + concreteness + solid + shape
+count_resid <- lm(count_noun ~ log(freq) + concreteness + solid + shape, data = predictors_df_few) %>% resid()
+```
+
+many predictors
+```{r check_predictors_many}
+# Residualize solid ~ freq + concreteness
+solid_resid_many <- lm(solid ~ log(freq) + concreteness, data = predictors_df_many) %>% resid()
+
+# Residualize shape ~ freq + concreteness + solid
+shape_resid_many <- lm(shape ~ log(freq) + concreteness + solid, data = predictors_df_many) %>% resid()
+# Residualize count noun ~ freq + concreteness + solid + shape
+count_resid_many <- lm(count_noun ~ log(freq) + concreteness + solid + shape, data = predictors_df_many) %>% resid()
+# Residualize mass noun ~ freq + concreteness + solid + shape + count
+mass_resid_many <- lm(mass_noun ~ log(freq) + concreteness + solid + shape + count_noun, data = predictors_df_many) %>% resid()
+# Residualize none of these ~ freq + concreteness + solid + shape + count + mass
+none_resid_many <- lm(none_of_these ~ log(freq) + concreteness + solid + shape + count_noun + mass_noun, data = predictors_df_many) %>% resid()
+# Residualize non solid ~ freq + concreteness + solid + shape + count + mass + none
+non_solid_resid_many <- lm(non_solid ~ log(freq) + concreteness + solid + shape + count_noun + mass_noun + none_of_these, data = predictors_df_many) %>% resid()
+# Residualize color ~ freq + concreteness + solid + shape + count + mass + none + non-solid
+color_resid_many <- lm(color ~ log(freq) + concreteness + solid + shape + count_noun + mass_noun + none_of_these + non_solid, data = predictors_df_many) %>% resid()
+# Residualize material ~ freq + concreteness + solid + shape + count + mass + none + non-solid + color
+material_resid_many <- lm(material ~ log(freq) + concreteness + solid + shape + count_noun + mass_noun + none_of_these + non_solid + color, data = predictors_df_many) %>% resid()
+# Residualize unclear solid ~ freq + concreteness + solid + shape + count + mass + none + non-solid + color + material
+unclear_solid_resid_many <- lm(unclear_solid ~ log(freq) + concreteness + solid + shape + count_noun + mass_noun + none_of_these + non_solid + color + material, data = predictors_df_many) %>% resid()
+# Residualize unclear count mass ~ freq + concreteness + solid + shape + count + mass + none + non-solid + color + material + unclear solid
+unclear_countmass_resid_many <- lm(unclear_countmass ~ log(freq) + concreteness + solid + shape + count_noun + mass_noun + none_of_these + non_solid + color + material + unclear_solid, data = predictors_df_many) %>% resid()
+
+
+```
+add residuals to dataframes
+```{r add_residuals}
+# Add residuals to predictors_df_many
+predictors_df_many <- predictors_df_many %>%
+  mutate(
+    solid_resid_many = solid_resid_many,
+    shape_resid_many = shape_resid_many,
+    count_resid_many = count_resid_many,
+    mass_resid_many = mass_resid_many,
+    none_resid_many = none_resid_many,
+    non_solid_resid_many = non_solid_resid_many,
+    color_resid_many = color_resid_many,
+    material_resid_many = material_resid_many,
+    unclear_solid_resid_many = unclear_solid_resid_many,
+    unclear_countmass_resid_many = unclear_countmass_resid_many )
+```
+
+
+```{r}
+predictors_df_few <- predictors_df_few %>%
+  mutate(
+    solid_resid = solid_resid,
+    shape_resid = shape_resid,
+    count_resid = count_resid )
+```
+
+
+
+# models
+## regular lms
+### few parameters
+```{r model_few}
+aoa_model_few <- lm(aoa ~ log(freq) + concreteness + solid_resid + shape_resid + count_resid, data = predictors_df_few)
+summary(aoa_model_few)
+
+ summary(lm(aoa ~ log(freq) + concreteness + shape_resid, data = predictors_df_few))
+```
+model with few raw data without residuals
+```{r model_raw_few}
+aoa_model_raw_few <- lm(aoa ~ log(freq) + concreteness + solid + shape + count_noun, data = predictors_df_few)
+summary(aoa_model_raw_few)
+summary(lm(aoa ~ log(freq) + concreteness + solid + shape + count_noun, data = predictors_df_few))
+```
+
+### many parameters
+```{r model_many}
+aoa_model_many <- lm(aoa ~ log(freq) + concreteness + solid_resid_many + shape_resid_many + count_resid_many + mass_resid_many + none_resid_many + non_solid_resid_many + color_resid_many + material_resid_many + unclear_solid_resid_many + unclear_countmass_resid_many, data = predictors_df_many)
+summary(aoa_model_many)
+```
+
+model with many raw data without residuals
+```{r model_raw_many}
+aoa_model_raw_many <- lm(aoa ~ log(freq) + concreteness + solid + shape + count_noun + mass_noun + none_of_these + non_solid + color + material + unclear_solid + unclear_countmass, data = predictors_df_many)
+summary(aoa_model_raw_many)
+```
+
+## model comparison
+```{r model_comparison}
+# Compare models
+model_comparison <- data.frame(
+  Model = c("aoa_model_few", "aoa_model_many", "aoa_model_raw_few", "aoa_model_raw_many"),
+  AIC = c(AIC(aoa_model_few), AIC(aoa_model_many), AIC(aoa_model_raw_few), AIC(aoa_model_raw_many)),
+  BIC = c(BIC(aoa_model_few), BIC(aoa_model_many), BIC(aoa_model_raw_few), BIC(aoa_model_raw_many))
+)
+model_comparison <- model_comparison %>%
+  mutate(
+    AIC_diff = AIC - min(AIC),
+    BIC_diff = BIC - min(BIC)
+  )
+model_comparison
+```
+
+## using PCA 
+```{r pca}
+# Perform PCA on the predictors
+
+# cat_pca <- prcomp(final_data[, c("shape", "material", "color", "none_of_these")], center = TRUE, scale. = TRUE)
+cat_pca <- prcomp(final_data %>%
+                    select(shape, material, color, none_of_these) %>%
+                    drop_na(), center = TRUE, scale. = TRUE)
+
+solid_pca <- prcomp(final_data %>%
+                    select(solid, unclear_solid, non_solid) %>%
+                    drop_na(), center = TRUE, scale. = TRUE)
+
+count_pca <- prcomp(final_data %>%
+                    select(count_noun, mass_noun, unclear_countmass) %>%
+                    drop_na(), center = TRUE, scale. = TRUE)
+
+# Get complete cases for each PCA input
+cat_rows <- complete.cases(final_data[, c("shape", "material", "color", "none_of_these")])
+solid_rows <- complete.cases(final_data[, c("solid", "unclear_solid", "non_solid")])
+count_rows <- complete.cases(final_data[, c("count_noun", "mass_noun", "unclear_countmass")])
+
+# Combine with full data
+predictors_df_pca <- final_data %>%
+  mutate(
+    pca1 = NA_real_,
+    pca2 = NA_real_,
+    pca1_count = NA_real_,
+    pca2_count = NA_real_,
+    pca1_solid = NA_real_,
+    pca2_solid = NA_real_
+  )
+
+# Fill in scores only for rows with complete data
+predictors_df_pca$pca1[cat_rows] <- cat_pca$x[, 1]
+predictors_df_pca$pca2[cat_rows] <- cat_pca$x[, 2]
+predictors_df_pca$pca1_count[count_rows] <- count_pca$x[, 1]
+predictors_df_pca$pca2_count[count_rows] <- count_pca$x[, 2]
+predictors_df_pca$pca1_solid[solid_rows] <- solid_pca$x[, 1]
+predictors_df_pca$pca2_solid[solid_rows] <- solid_pca$x[, 2]
+
+predictors_df_pca <- predictors_df_pca %>%
+  select(aoa, freq, concreteness, starts_with("pca")) %>%
+  drop_na()
+# Check for NAs in the PCA scores
+predictors_df_pca %>%
+  summarise(across(starts_with("pca"), ~ sum(is.na(.))))
+
+
+# predictors_df_pca <- final_data %>%
+#   select(aoa, freq, concreteness) %>%
+#   drop_na() %>%
+#   mutate(pca1 = cat_pca$x[, 1],
+#          pca2 = cat_pca$x[, 2],
+#          pca1_count = count_pca$x[, 1],
+#          pca2_count = count_pca$x[, 2],
+#          pca1_solid = solid_pca$x[, 1],
+#          pca2_solid = solid_pca$x[, 2]) %>%
+#   drop_na()
+
+#summary(cat_pca)
+# Get the PCA loadings
+cat_pca$rotation
+
+summary(lm(aoa ~ log(freq) + concreteness + pca1 + pca2 + pca1_count + pca2_count + pca1_solid + pca2_solid, data = predictors_df_pca))
+
+
+```
+
+visualize the pca loadings
+🧠 Interpret Loadings
+Each arrow shows how a variable contributes to the principal components:
+
+Longer arrows → stronger influence on that PC.
+
+Direction of arrows → shows which variables are aligned.
+
+If two arrows point in the same direction → those variables tend to co-occur.
+
+Opposite direction → variables are negatively related.
+
+Example Interpretations:
+If in the category PCA, shape and color both load strongly on PC1 in the same direction, then PC1 might represent “visual form organization”.
+
+If material loads in the opposite direction, PC2 may reflect a “material-based vs. shape-based organization”.
+
+```{r pca_loadings}
+cat_loadings <- as.data.frame(cat_pca$rotation)
+cat_loadings$feature <- rownames(cat_loadings)
+
+ggplot(cat_loadings, aes(x = PC1, y = PC2, label = feature)) +
+  geom_segment(aes(xend = 0, yend = 0), arrow = arrow(length = unit(0.2, "cm")), color = "steelblue") +
+  geom_text(hjust = 0.5, vjust = -0.5, size = 5) +
+  coord_equal() +
+  labs(title = "Category PCA Loadings (Shape / Material / Color / None)",
+       x = "PC1", y = "PC2") +
+  theme_minimal()
+```
+
+``` {r pca_loadings_solid}
+solid_loadings <- as.data.frame(solid_pca$rotation)
+solid_loadings$feature <- rownames(solid_loadings)
+
+ggplot(solid_loadings, aes(x = PC1, y = PC2, label = feature)) +
+  geom_segment(aes(xend = 0, yend = 0), arrow = arrow(length = unit(0.2, "cm")), color = "tomato") +
+  geom_text(hjust = 0.5, vjust = -0.5, size = 5) +
+  coord_equal() +
+  labs(title = "Solid/Mass PCA Loadings", x = "PC1", y = "PC2") +
+  theme_minimal()
+
+```
+
+```{r pca_loadings_count}
+count_loadings <- as.data.frame(count_pca$rotation)
+count_loadings$feature <- rownames(count_loadings)
+ggplot(count_loadings, aes(x = PC1, y = PC2, label = feature)) +
+  geom_segment(aes(xend = 0, yend = 0), arrow = arrow(length = unit(0.2, "cm")), color = "forestgreen") +
+  geom_text(hjust = 0.5, vjust = -0.5, size = 5) +
+  coord_equal() +
+  labs(title = "Count/Mass PCA Loadings", x = "PC1", y = "PC2") +
+  theme_minimal()
+```
+```{r pca_loadings_solid_count}
+# Combine the loadings into one data frame
+combined_loadings <- rbind(
+  cbind(cat_loadings, type = "Category"),
+  cbind(solid_loadings, type = "Solid/Mass"),
+  cbind(count_loadings, type = "Count/Mass")
+)
+# Plot the combined loadings
+ggplot(combined_loadings, aes(x = PC1, y = PC2, label = feature, color = type)) +
+  geom_segment(aes(xend = 0, yend = 0), arrow = arrow(length = unit(0.2, "cm"))) +
+  geom_text(hjust = 0.5, vjust = -0.5, size = 5) +
+  coord_equal() +
+  labs(title = "Combined PCA Loadings",
+       x = "PC1", y = "PC2") +
+  theme_minimal()
+```
+
+words per categories
+```{r}
+final_data$word <- final_data$uni_lemma
+cat_scores <- as.data.frame(cat_pca$x)  # scores for each word
+cat_scores$word <- final_data$word[!is.na(final_data$shape)]  # match words to scores
+
+ggplot(cat_scores, aes(x = PC1, y = PC2, label = word)) +
+  geom_point(color = "steelblue") +
+  geom_text(size = 3, vjust = 1.2, hjust = 0.5, alpha = 0.6) +
+  labs(title = "Words in Category PCA Space",
+       x = "Principal Component 1",
+       y = "Principal Component 2") +
+  theme_minimal()
+```
+
+```{r dominant}
+# Get the dominant category for each word
+
+final_data <- final_data %>%
+  rowwise() %>%
+  mutate(
+    dominant_category = {
+      props <- c(shape, material, color, none_of_these)
+      categories <- c("shape", "material", "color", "none_of_these")
+      
+      if (all(is.na(props))) {
+        NA_character_  # If all values are NA, return NA
+      } else {
+        categories[which.max(props)]
+      }
+    }
+  ) %>%
+  ungroup()
+
+
+final_data %>% filter(is.na(dominant_category)) %>% select(word, shape, material, color, none_of_these)
+
+final_data %>%
+  count(dominant_category, sort = TRUE)
+
+cat_scores$dominant_category <- final_data$dominant_category[!is.na(final_data$shape)]
+
+ggplot(cat_scores, aes(x = PC1, y = PC2, color = dominant_category, label = word)) +
+  geom_point(size = 2.5) +
+  geom_text(size = 2.5, vjust = 1.2, hjust = 0.5, alpha = 0.6) +
+  labs(title = "Words in Category PCA Space by Dominant Category",
+       x = "PC1", y = "PC2", color = "Dominant Category") +
+  theme_minimal()
+
+# get the words that load highly on each component
+
+```
+words per solidity
+```{r}
+final_data <- final_data %>%
+  rowwise() %>%
+  mutate(
+    dominant_solidity = {
+      props <- c(solid, non_solid, unclear_solid)
+      labels <- c("solid", "non_solid", "unclear_solid")
+      if (all(is.na(props))) NA_character_ else labels[which.max(props)]
+    }
+  ) %>%
+  ungroup()
+
+
+final_data <- final_data %>%
+  rowwise() %>%
+  mutate(
+    dominant_countability = {
+      props <- c(count_noun, mass_noun, unclear_countmass)
+      labels <- c("count_noun", "mass_noun", "unclear_countmass")
+      if (all(is.na(props))) NA_character_ else labels[which.max(props)]
+    }
+  ) %>%
+  ungroup()
+
+final_data %>% count(dominant_solidity)
+final_data %>% count(dominant_countability)
+final_data %>% count(dominant_category, sort = TRUE)
+
+cat_scores$dominant_category <- final_data$dominant_category[!is.na(final_data$shape)]
+
+solid_scores$dominant_solidity <- final_data$dominant_solidity[!is.na(final_data$shape)]
+
+count_scores$dominant_countability <- final_data$dominant_countability[!is.na(final_data$shape)]
+
+ggplot(solid_scores, aes(x = PC1, y = PC2, color = dominant_category, label = word)) +
+  geom_point(size = 2.5) +
+  geom_text(size = 2.5, vjust = 1.2, hjust = 0.5, alpha = 0.6) +
+  labs(title = "Words in Category PCA Space by Dominant Category",
+       x = "PC1", y = "PC2", color = "Dominant Category") +
+  theme_minimal()
+
+
+```
+
+```{r pca_words}
+# Get the words that load highly on each component
+# For category PCA
+cat_pca_words <- cat_loadings %>%
+  filter(abs(PC1) > 0.5 | abs(PC2) > 0.5) %>%
+  arrange(desc(abs(PC1), abs(PC2)))
+cat_pca_words$feature <- factor(cat_pca_words$feature, levels = cat_pca_words$feature[order(cat_pca_words$PC1, decreasing = TRUE)])
+ggplot(cat_pca_words, aes(x = feature, y = PC1)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Category PCA Loadings",
+       x = "Feature", y = "Loading") +
+  theme_minimal()
+```
+
+## brms
+
+```{r setup_brms}
+# First, ensure XCode Command Line Tools are properly installed
+# You may need to run this in terminal: xcode-select --install
+
+# Set more comprehensive compiler options for Apple Silicon
+Sys.setenv(MAKEFLAGS = "-j4")
+Sys.setenv(CXX = "/usr/bin/clang++")
+Sys.setenv(CXX1X = "/usr/bin/clang++")
+Sys.setenv(CXX17 = "/usr/bin/clang++")
+Sys.setenv(CXXFLAGS = "-I/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include -stdlib=libc++")
+Sys.setenv("PKG_CXXFLAGS" = "-I/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include -stdlib=libc++")
+
+# Load brms with proper settings
+library(brms)
+rstan_options(auto_write = TRUE)
+options(mc.cores = 2)  # Reduced from detectCores() for stability
+
+# Install and setup CmdStan properly
+if (!require(cmdstanr)) {
+  install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+}
+library(cmdstanr)
+cmdstanr::rebuild_cmdstan()  # This will rebuild with the correct compiler settings
+cmdstanr::set_cmdstan_path()
+
+# Set brms to use cmdstanr backend
+options(brms.backend = "cmdstanr")
+
+# Additional compiler settings for Stan
+options(buildtools.check = NULL)
+```
+
+✅ 2. Bayesian model with original (non-residualized) predictors
+``` {r brms_original}
+# Install and setup CmdStan
+library(cmdstanr)
+install_cmdstan()  # Only need to run this once
+set_cmdstan_path()  # This will automatically find the installed CmdStan
+
+# Your existing brms setup code
+# Bayesian model with raw predictors
+model_nonresid <- brm(
+  formula = aoa ~ log(freq) + concreteness + solid + shape + count_noun,
+  data = predictors_df_few,
+  family = gaussian(),
+  prior = c(
+    prior(normal(0, 1), class = "b"),
+    prior(normal(0, 5), class = "Intercept"),
+    prior(exponential(1), class = "sigma")
+  ),
+  chains = 4,
+  cores = 2,  # Reduced for stability
+  iter = 2000,
+  seed = 123,
+  backend = "cmdstanr",
+  refresh = 500,
+  control = list(adapt_delta = 0.9)  # Added for better sampling
+)
+```
+
+✅ 3. Bayesian model with residualized predictors
+``` {r brms_residualized}
+# Bayesian model with residualized predictors
+model_resid <- brm(
+  formula = aoa ~ log(freq) + concreteness + solid_resid + shape_resid + count_resid,
+  data = predictors_df_few,
+  family = gaussian(),
+  prior = c(
+    prior(normal(0, 1), class = "b"),
+    prior(normal(0, 5), class = "Intercept"),
+    prior(exponential(1), class = "sigma")
+  ),
+  chains = 4, cores = 4, iter = 2000, seed = 123
+)
+
+```
+
